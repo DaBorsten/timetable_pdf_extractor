@@ -9,11 +9,13 @@ from io import BytesIO
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import functools
+import os
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: create thread pool for CPU-intensive PDF processing
-    app.state.executor = ThreadPoolExecutor(max_workers=4)
+    max_workers = int(os.getenv("MAX_WORKERS", "4"))
+    app.state.executor = ThreadPoolExecutor(max_workers=max_workers)
     yield
     # Shutdown: clean up the executor
     app.state.executor.shutdown(wait=True)
@@ -84,8 +86,6 @@ def extract_pdf_data_sync(pdf_data: bytes):
                     blocks = cell.strip().split("\n")
 
                     for j in range(0, len(blocks), 2):
-                        if j >= len(blocks):
-                            continue
                         class_subject = blocks[j]
                         teacher_room = blocks[j + 1] if j + 1 < len(blocks) else ""
 
@@ -168,7 +168,7 @@ async def extract_pdf_data(pdf_file: UploadFile, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        detail = f"{e}: {e.__cause__}" if e.__cause__ else str(e)
+        detail = str(e) if not e.__cause__ else f"{e}: {e.__cause__}"
         raise HTTPException(status_code=500, detail=detail)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Unexpected error processing the PDF file.")
