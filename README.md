@@ -57,7 +57,7 @@ The provided `Dockerfile` exposes port `8080` in the container.
 docker build -t pdf-extractor .
 
 # Run the container and map the port
-docker run --rm -p 8080:8080 pdf-extractor
+docker run --name timetable-pdf-extractor -p 8080:8080 pdf-extractor
 ```
 
 The API will be available at: http://127.0.0.1:8080
