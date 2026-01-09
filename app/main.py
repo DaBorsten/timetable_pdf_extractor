@@ -1,6 +1,6 @@
 from typing import Annotated, Dict, List, TypedDict
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Request
 from fastapi.responses import JSONResponse
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,15 +10,13 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import functools
 
-# Thread pool for CPU-intensive PDF processing
-executor = ThreadPoolExecutor(max_workers=4)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: executor is already created
+    # Startup: create thread pool for CPU-intensive PDF processing
+    app.state.executor = ThreadPoolExecutor(max_workers=4)
     yield
     # Shutdown: clean up the executor
-    executor.shutdown(wait=True)
+    app.state.executor.shutdown(wait=True)
 
 app = FastAPI(
     title="Timetable-Parser API",
@@ -50,7 +48,6 @@ def extract_pdf_data_sync(pdf_data: bytes):
     """Synchronous PDF processing function to be run in thread pool"""
     json_output: Dict[str, Dict[str, List[Entry]]] = {tag: {} for tag in weekdays}
     class_name = None
-    weekdays_len = len(weekdays)
     
     try:
         with pdfplumber.open(BytesIO(pdf_data)) as pdf:
@@ -76,18 +73,19 @@ def extract_pdf_data_sync(pdf_data: bytes):
 
                 for i, cell in enumerate(row[1:], start=1):
                     day_index = (i - 1) // 2
-                    if day_index >= weekdays_len:
+                    if day_index >= len(weekdays):
                         continue
 
                     day = weekdays[day_index]
 
-                    # Optimize: check None first (cheaper than strip)
-                    if not cell or not cell.strip():
+                    if not (cell and cell.strip()):
                         continue
 
                     blocks = cell.strip().split("\n")
 
                     for j in range(0, len(blocks), 2):
+                        if j >= len(blocks):
+                            continue
                         class_subject = blocks[j]
                         teacher_room = blocks[j + 1] if j + 1 < len(blocks) else ""
 
@@ -95,7 +93,7 @@ def extract_pdf_data_sync(pdf_data: bytes):
                         if "--" in class_subject:
                             class_parts = class_subject.split("--", 1)
                             school_class = class_parts[0].strip()
-                            school_subject = class_parts[1].strip()
+                            school_subject = class_parts[1].strip() if len(class_parts) > 1 else ""
                         else:
                             school_class = class_subject.strip()
                             school_subject = ""
@@ -103,7 +101,7 @@ def extract_pdf_data_sync(pdf_data: bytes):
                         if "--" in teacher_room:
                             teacher_parts = teacher_room.split("--", 1)
                             school_teacher = teacher_parts[0].strip()
-                            school_room = teacher_parts[1].strip()
+                            school_room = teacher_parts[1].strip() if len(teacher_parts) > 1 else ""
                         else:
                             school_teacher = teacher_room.strip()
                             school_room = ""
@@ -112,8 +110,13 @@ def extract_pdf_data_sync(pdf_data: bytes):
                         if "/" in school_class:
                             class_parts = school_class.split("/", 1)
                             base_class = class_parts[0].strip()
-                            group = class_parts[1].strip().upper()
-                            specialization = 2 if group == "A" else 3 if group == "B" else 1
+                            group = class_parts[1].strip().upper() if len(class_parts) > 1 else ""
+                            if group == "A":
+                                specialization = 2
+                            elif group == "B":
+                                specialization = 3
+                            else:
+                                specialization = 1
                         else:
                             base_class = school_class.strip()
                             specialization = 1
@@ -152,20 +155,21 @@ def extract_pdf_data_sync(pdf_data: bytes):
     return json_output, class_name
 
 
-async def extract_pdf_data(pdf_file: UploadFile):
+async def extract_pdf_data(pdf_file: UploadFile, request: Request):
     """Async wrapper that runs PDF extraction in thread pool"""
     pdf_data = await pdf_file.read()
     loop = asyncio.get_running_loop()
     # Run CPU-intensive work in thread pool to avoid blocking the event loop
     try:
         return await loop.run_in_executor(
-            executor,
+            request.app.state.executor,
             functools.partial(extract_pdf_data_sync, pdf_data)
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        detail = f"{e}: {e.__cause__}" if e.__cause__ else str(e)
+        raise HTTPException(status_code=500, detail=detail)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Unexpected error processing the PDF file.")
 
@@ -173,11 +177,11 @@ async def extract_pdf_data(pdf_file: UploadFile):
 @app.post("/upload",
         summary="Upload pdf timetables",
         description="Upload a pdf file and extract all the information from the timetable. The pdf file has to include a table.")
-async def upload_file(file: Annotated[UploadFile, File(description="pdf file with timetable")]):
+async def upload_file(file: Annotated[UploadFile, File(description="pdf file with timetable")], request: Request):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
     
-    timetable, class_name = await extract_pdf_data(file)
+    timetable, class_name = await extract_pdf_data(file, request)
     
     return JSONResponse(content={
         "class": class_name,
