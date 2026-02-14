@@ -29,7 +29,7 @@ python -m pip install pip-tools
 
 # 3) Generate or update requirements.txt from top-level requirements.in
 # - First time or selective:    pip-compile requirements.in
-# - Upgrade all packages:       pip-compile -o requirements.txt --upgrade requirements.in
+# - Upgrade all packages:       pip-compile -o requirements.txt --upgrade requirements.in --strip-extras
 
 # 4) Install dependencies
 pip install --upgrade pip
@@ -64,11 +64,11 @@ The API will be available at: http://127.0.0.1:8080
 
 ### Option C: Google Cloud Run
 
-Das Projekt kann auch auf Google Cloud Run deployt werden. Eine kompakte Schritt-für-Schritt-Anleitung findest du hier:
+The project can also be deployed on Google Cloud Run. You can find concise step-by-step instructions here:
 
 https://dev.to/0xnari/deploying-fastapi-app-with-google-cloud-run-13f3
 
-Hinweis: Der bereitgestellte `Dockerfile` lauscht bereits auf Port `8080`, was mit Cloud Run kompatibel ist.
+Note: The provided `Dockerfile` already listens on port `8080`, which is compatible with Cloud Run.
 
 ## API
 
